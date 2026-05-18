@@ -10,6 +10,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+COPY env_config.py .
 COPY main.py .
 COPY src ./src
 
