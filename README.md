@@ -23,10 +23,10 @@ This repo is **public**: portfolio + transparency + free Actions minutes. Conseq
 
 - All personal data (resume, real `config.yaml`, `career_goals.yaml`) lives in **Google Drive**, not the repo.
 - All secrets live in **GitHub Secrets** (or local `.env`, gitignored).
-- **GitHub Actions logs are public.** The pipeline sanitizes logs (counts and status only — no JD text, no resume text, no full LLM responses).
+- **GitHub Actions logs are public.** The pipeline sanitizes logs (counts and status only - no JD text, no resume text, no full LLM responses).
 - If your job search is sensitive (e.g. visible to a current employer), reconsider repo visibility before forking.
 
-Forkers must provision their own secrets and Drive files — none of mine are reachable.
+Forkers must provision their own secrets and Drive files - none of mine are reachable.
 
 ## Prerequisites
 
@@ -44,7 +44,7 @@ Forkers must provision their own secrets and Drive files — none of mine are re
 2. Enable **Google Sheets API** and **Google Drive API** (APIs & Services → Library).
 3. Create a service account (IAM → Service Accounts → Create). No project-level role needed.
 4. Generate a JSON key (Keys tab → Add Key → Create new key → JSON). Save it outside the repo.
-5. Note the service account email — `*@*.iam.gserviceaccount.com`. You'll share each resource below with this email.
+5. Note the service account email - `*@*.iam.gserviceaccount.com`. You'll share each resource below with this email.
 6. Create a Google Sheet with two tabs named exactly `Jobs` and `Costs`. Share with the service account email as **Editor**. Copy the sheet ID from the URL.
 7. Upload your `resume.pdf` to Drive. Share with the service account as **Viewer**. Copy the file ID.
 8. Copy [`config.example.yaml`](./config.example.yaml) → `config.yaml`, fill in real values (locations, threshold, etc.), upload to Drive. Share with the service account as **Editor** (so first-run bootstrap can write back `search_queries`). Copy the file ID.
@@ -61,7 +61,7 @@ Forkers must provision their own secrets and Drive files — none of mine are re
 
 ### 4. Secrets
 
-Set these in **GitHub Secrets** (Settings → Secrets and variables → Actions) and mirror them in a local `.env` (from [`.env.example`](./.env.example)):
+Set these in a local `.env` (from [`.env.example`](./.env.example)):
 
 | Secret | Source |
 |---|---|
@@ -92,10 +92,10 @@ The same image runs locally and in CI.
 cp .env.example .env
 # Fill in the same values you used in GitHub Secrets.
 
-# 2. Dry run — prints what would be written without touching Sheet/email
+# 2. Dry run - prints what would be written without touching Sheet/email
 docker compose run --rm jobfinder
 
-# 3. Real local run — writes to your Sheet, sends a real email
+# 3. Real local run - writes to your Sheet, sends a real email
 DRY_RUN=0 docker compose run --rm jobfinder
 ```
 
@@ -105,16 +105,6 @@ DRY_RUN=0 docker compose run --rm jobfinder
 
 When you land a job (or just need a break): GitHub repo → Actions → "Jobfinder daily" → ⋯ → **Disable workflow**. Re-enable any time.
 
-## Tuning
-
-Adjust in `config.yaml` on Drive (no code changes needed):
-
-- `relevance_threshold` — start at 70; lower to 50 for the first week to see what's being filtered out, then tune up.
-- `max_age_days` — how stale a posting can be before it's dropped.
-- `excluded_title_keywords` — block "intern", "founding engineer", etc.
-- `experience_range` — `[min, max]` in years.
-- `search_queries` — what titles each Apify run searches for.
-
 ## Adding a source
 
 | Type | How |
@@ -123,16 +113,6 @@ Adjust in `config.yaml` on Drive (no code changes needed):
 | A specific company careers page | Create `src/sources/<company>.py` implementing the `JobSource` ABC. Register under `sources:` with `type: plugin`. |
 
 See [`src/sources/base.py`](./src/sources/base.py) for the `JobPosting` dataclass + `JobSource` ABC.
-
-## Roadmap
-
-This repo is Phase 1 of a five-phase plan; see [`PLAN.md`](./PLAN.md) for the full picture.
-
-- **Phase 1** (this): daily cron + Sheets + email.
-- **Phase 2**: hosted MCP server exposing read tools to Claude / ChatGPT / Cursor / etc.
-- **Phase 3**: LLM career advisor backed by accumulated data + resume + career goals.
-- **Phase 4**: interview prep mode (reminders + per-company briefs).
-- **Phase 5** (contingent): Airtable/Notion upgrade if the Sheet becomes a friction point.
 
 ## License
 
