@@ -382,7 +382,7 @@ selectolax>=0.3.21                   # html parsing for custom scrapers (if need
 
 These can't be decided from a desk; need to be confirmed when building:
 
-1. **Apify LinkedIn actor selection** — recommend `bebity/linkedin-jobs-scraper` (free tier, no LinkedIn cookies); verify pricing and output schema on apify.com before committing. Alternative: `apimaestro/linkedin-jobs-scraper-api`.
+1. **Apify LinkedIn actor selection** — resolved: `crawlworks/linkedin-jobs-scraper` ($0.0015/job base tier, no login, `jobsToFetch` honored). Comparison of candidates lives in `SCRAPER_OPTIONS.md`.
 2. **Razorpay careers page structure** — check `razorpay.com/jobs/` (and `careers.razorpay.com`) for: Lever/Greenhouse-backed (clean JSON API), Workday (complex), or custom SPA (Playwright). Decision affects whether `playwright` is needed.
 3. **`employment_type` from LinkedIn** — confirm Apify actor exposes this; filter logic depends on it
 4. **`experience_required` extraction** — Apify often gives only `seniorityLevel` ("Mid-Senior level"); may need a regex pass on JD or extract via LLM in scoring call

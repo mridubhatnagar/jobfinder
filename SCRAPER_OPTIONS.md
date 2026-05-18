@@ -6,7 +6,7 @@ Last surveyed: **2026-05-14**
 
 ## Quick comparison
 
-| | **apimaestro** (current) | **delicious_zebu** | **memo23** | **crawlworks** |
+| | **apimaestro** | **delicious_zebu** | **memo23** | **crawlworks** (current) |
 |---|---|---|---|---|
 | Per-job | $0.005 | ? (undisclosed) | ? (undisclosed) | **$0.0015** (base; $0.001 high-tier) |
 | Subscription floor | $0 | $25/mo | $15/mo | $0 |
@@ -50,15 +50,12 @@ Apify free tier is **$5/month** — none of these fit comfortably at the current
 
 ## Detailed notes
 
-### apimaestro/linkedin-jobs-scraper-api (current)
+### apimaestro/linkedin-jobs-scraper-api
 
-- Selected during Phase 1 launch (TODO #7, #8).
-- Output mapping in `apify_linkedin.py:_to_posting` is tuned to its shape:
-  - `apply_url`, `job_url`, `description`, `company_url` (LinkedIn page — not used after 2026-05-14 fix)
-  - `employment_type` lives inside `job_insights` array
-- **`maxItems` is inert** — actor returns ~100 jobs/query regardless of the setting.
-- **`usageTotalUsd` settles asynchronously** — `track_apify` computes cost as `items × eventPriceUsd` from `pricingInfo` instead, with `usageTotalUsd` as fallback.
-- Light filtering: only `keywords`, `location`, `remote`, `experienceLevel` (string codes: `entry`/`associate`/`mid_senior`/`director`/`executive`).
+- Trialed during Phase 1 launch (TODO #7), later replaced by crawlworks.
+- **`maxItems` was inert** — actor returned ~100 jobs/query regardless of the setting.
+- **`usageTotalUsd` settles asynchronously** — `track_apify` computes cost as `items × eventPriceUsd` from `pricingInfo` instead, with `usageTotalUsd` as fallback. (Behavior retained for crawlworks.)
+- Light filtering: only `keywords`, `location`, `remote`, `experienceLevel` (string codes).
 
 ### delicious_zebu/linkedin-jobs-scraper-no-login-required
 
@@ -73,35 +70,22 @@ Apify free tier is **$5/month** — none of these fit comfortably at the current
 - Uses numeric codes for `experienceLevels` (1=Internship, 2=Entry, 3=Associate, 4=Mid-Senior, 5=Executive, 6=Director).
 - Healthier adoption than delicious_zebu (30 MAU, updated 20 days ago).
 
-### crawlworks/linkedin-jobs-scraper
+### crawlworks/linkedin-jobs-scraper (current)
 
-- **Strongest candidate to replace apimaestro.**
-- **3.3× cheaper** at $0.0015/job base ($0.001 on higher subscription tiers).
-- No monthly subscription floor (new pay-per-event model, migrated from $19/mo flat).
+- Selected after a live probe confirmed pricing and output shape.
+- **3.3× cheaper than apimaestro** at $0.0015/job base ($0.001 on higher subscription tiers).
+- No monthly subscription floor (pay-per-event model).
 - Rich source-side filtering — replaces most of jobfinder's local filters.
 - Output includes salary AND source-provided required skills.
-- Best adoption among alternatives (79 MAU, 423 total users).
-- **Input schema (confirmed from actor's sample JSON):**
-  - `query` (string), `location` (single string), `jobsToFetch` (int)
+- Output mapping in `src/sources/apify_linkedin.py:_to_posting` is tuned to crawlworks's field names (`jobUrl`, `applyUrl`, `jobDescription`, `companyName`, `employmentType`, `salary`, etc.).
+- **Input schema:**
+  - `query` (string), `location` (single string), `jobsToFetch` (int — honored, unlike apimaestro's `maxItems`)
   - `timePostedRange` (string enum, seconds): `""` (any), `"86400"` (24h), `"259200"` (3d), `"604800"` (7d), `"2592000"` (30d)
   - Employment type flags: `contract`, `fullTime`, `partTime`, `temporary`, `volunteer`, `internship`
   - Experience level flags: `internshipLevel`, `entryLevel`, `associate`, `midSeniorLevel`, `director`, `executive`
   - Work mode flags: `remote`, `hybrid` (onSite implied when both false)
-- **Multi-city**: `location` is single-string; "up to 3 LinkedIn search URLs per run" supports multi-city in one call, field name TBD.
-- **Unknowns before switching:**
-  - Real output JSON shape — `_to_posting` needs updating for the field names crawlworks uses.
-  - Exact `timePostedRange` enum values.
-  - Whether `jobsToFetch` is honored (apimaestro's `maxItems` was inert).
 
-## Decision factors
-
-**Switch to crawlworks if:**
-- A live probe confirms per-job ≤ $0.001 and output shape can be cleanly mapped.
-- Per-month savings outweigh the migration cost of updating `_to_posting` in `apify_linkedin.py`.
-
-**Stay with apimaestro if:**
-- The `experienceLevel: mid_senior` addition (added 2026-05-14) already cuts waste enough.
-- Output stability matters more than 5× cost reduction.
+## Decision factors (for future swaps)
 
 **Avoid memo23 if:** salary data in the Sheet is non-negotiable.
 **Avoid delicious_zebu if:** $25/mo subscription floor is a non-starter.

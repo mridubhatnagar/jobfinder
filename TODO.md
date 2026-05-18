@@ -1,8 +1,8 @@
 # Jobfinder — Phase 1 TODO
 
-Derived from `PLAN.md`. 24 tasks, grouped by stage.
+Derived from `PLAN.md`. 25 tasks, grouped by stage.
 
-**Legend:** `[x]` done · `[ ]` pending · `(DEFERRED)` punted past Phase 1 launch · `(BLOCKED)` waiting on external dependency
+**Legend:** `[x]` done · `[ ]` pending · `(DEFERRED)` punted past Phase 1 launch · `(BLOCKED)` waiting on external dependency · `(OBSERVATION-GATED)` do only if real-run data surfaces a need
 
 ## Scaffold
 
@@ -27,7 +27,7 @@ Derived from `PLAN.md`. 24 tasks, grouped by stage.
   `JobPosting` dataclass with all fields from the plan (`source`, `company_name`, `company_website`, `job_title`, `location`, `posted_date`, `experience_required`, `salary`, `application_link`, `description`, `employment_type`). `JobSource` ABC with `fetch_jobs(config) -> Iterable[JobPosting]`. This is the plugin contract — adding a company = new file implementing this.
 
 - [x] **7. Investigate + select Apify LinkedIn actor**
-  Chosen: `apimaestro/linkedin-jobs-scraper-api` ($0.005/job, no login). Probed real output — confirmed `description`, `salary`, `apply_url` are returned (despite gaps in the actor's documented schema). Updated `config.example.yaml` accordingly.
+  Chosen: `crawlworks/linkedin-jobs-scraper` ($0.0015/job base tier, no login). Initially trialed `apimaestro/linkedin-jobs-scraper-api` ($0.005/job) but switched to crawlworks for 3.3× cost reduction once a probe confirmed per-job pricing and a clean output mapping (`jobUrl`, `applyUrl`, `jobDescription`, `companyName`, `employmentType`, `salary`). Compared candidates in `SCRAPER_OPTIONS.md`.
 
 - [x] **8. Implement `src/sources/apify_linkedin.py`: generic Apify actor caller**
   Reads `actor_id` + input schema from config; runs once per search_query in `config.search_queries`; maps actor output to `JobPosting` (with corrections for the actor's real shape: `apply_url` preferred, `salary` populated, `employment_type` extracted from `job_insights`). Tags each posting's `role_category` with the originating `search_query`.
@@ -78,10 +78,13 @@ Derived from `PLAN.md`. 24 tasks, grouped by stage.
 ## Verification
 
 - [x] **22. Local dry-run via Docker Compose**
-  Full live run completed (`DRY_RUN=0 docker compose run --rm jobfinder python main.py`). Funnel: 401 fetched → 227 after age → 20 after location → 17 after employment type → 17 scored → 2 kept (threshold 70) → 2 rows appended to Jobs, 1 cost row to Costs, 1 digest email sent. Apify cost tracking corrected mid-run: was returning $0 because `usageTotalUsd` settles async; now derived from `items × pricingPerEvent.eventPriceUsd` and matches exactly ($2.005 for 401 items). Total run cost ~$2.34. `maxItems` discovered to be inert on this actor (always returns ~100/query).
+  Full live run completed (`DRY_RUN=0 docker compose run --rm jobfinder python main.py`). Funnel: 401 fetched → 227 after age → 20 after location → 17 after employment type → 17 scored → 2 kept (threshold 70) → 2 rows appended to Jobs, 1 cost row to Costs, 1 digest email sent. Apify cost tracking corrected mid-run: was returning $0 because `usageTotalUsd` settles async; now derived from `items × pricingPerEvent.eventPriceUsd` and matches exactly ($2.005 for 401 items on apimaestro). Total run cost on apimaestro ~$2.34; `maxItems` was inert on that actor (always returned ~100/query). Subsequently switched to crawlworks (~$0.60/run, 3.3× cheaper, `jobsToFetch` honored) — see task #7.
 
 - [ ] **23. First GH Actions run: bootstrap + manual verify**
   Push code. First run bootstraps `search_queries` into Drive `config.yaml` and exits with email. Review/edit bootstrapped queries on Drive. Manually trigger `workflow_dispatch` for the real first run. Verify: `Jobs` tab populated, `Costs` tab row appended, digest email received, GH Actions logs contain no PII or JD text.
 
 - [ ] **24. Threshold tuning + add-a-source smoke tests**
   Week 1: lower `relevance_threshold` to ~50, observe surfaced jobs, adjust to the right signal level. Smoke test plugin pattern: add a second Apify entry in `config.yaml` (no code change) and confirm pipeline picks it up; add a stub `src/sources/<company>.py` + register in config and confirm. Validates the "adding a source = config edit only" promise.
+
+- [ ] **25. (OBSERVATION-GATED) Add Naukri / Indeed / Instahyre as sources**
+  Trigger: ≥1 week of LinkedIn-only digests reveals gaps (specific roles or companies consistently missing). Order of effort/payoff: **Naukri first** (India-specific tech coverage, Apify actor expected), **Indeed second** (broad aggregator, Apify actor expected), **Instahyre last** (smaller platform, likely needs a custom `src/sources/instahyre.py` scraper). Code prerequisite for the first non-LinkedIn Apify source: today's `src/sources/apify_linkedin.py` hardcodes crawlworks's LinkedIn output fields in `_to_posting`. Options: (A) generalize via a `field_map` in `config.yaml`, or (B) duplicate the file per actor (e.g., `apify_indeed.py`) and register via `type: plugin`. Pick B for the first addition; A becomes worth it at 3+ Apify sources.
