@@ -1,0 +1,36 @@
+# Jobfinder configuration example
+# Real values should be in config.yaml on Google Drive
+
+preferred_locations: ["Bangalore", "Remote", "Hyderabad"]
+max_age_days: 7
+relevance_threshold: 70
+employment_types: ["full-time", "long-term-contract"]
+experience_range: [2, 8]              # [min, max] in years
+blocked_companies: []                  # company names to skip
+excluded_title_keywords: ["intern", "founding engineer"]
+max_jobs_per_run: 200                  # safety cap on per-run scoring volume
+timezone: "Asia/Kolkata"               # display only; cron schedule is UTC
+
+search_queries: []                      # Will be bootstrapped if empty
+
+sources:
+  - type: apify
+    name: linkedin
+    actor: crawlworks/linkedin-jobs-scraper
+    input:
+      # `query` is injected per search_query at runtime. Everything below is passed through.
+      # Pricing: $0.0015/job (base tier). Free tier ($5/mo) covers ~3300 jobs.
+      location: "India"
+      jobsToFetch: 100
+      # Work-mode filters (booleans). All-false = no filter applied by actor.
+      remote: false
+      hybrid: false
+      # Seniority filters (booleans). Mix as needed.
+      midSeniorLevel: true
+      associate: true
+      # Employment-type filters (booleans).
+      fullTime: true
+      contract: true
+  - type: plugin
+    name: razorpay
+    module: src.sources.razorpay

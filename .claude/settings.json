@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./jobfinder-496209-1591396a9868.json)",
+      "Read(//home/mridu/personal/jobfinder/jobfinder-496209-1591396a9868.json)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_response.filePath // .tool_input.file_path // \"\"'); case \"$f\" in *.py) black -q \"$f\" 2>/dev/null || true ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

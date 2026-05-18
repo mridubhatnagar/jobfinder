@@ -1,0 +1,44 @@
+# --- Secrets & personal data (public-repo posture; nothing sensitive in tree) ---
+.env
+.env.*
+!.env.example
+
+# GCP service account keys (filename pattern is <project>-<keyid>.json)
+jobfinder-*.json
+*-service-account*.json
+*.pem
+*.key
+
+# Resume / config / career goals live in Drive, never in the repo
+resume.pdf
+*.pdf
+config.yaml
+career_goals.yaml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# --- Runtime artifacts ---
+data/
+
+# --- Local research / probe scripts (never published) ---
+probe_*.py
+
+# --- Claude Code (per-user overrides; never committed) ---
+.claude/settings.local.json
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

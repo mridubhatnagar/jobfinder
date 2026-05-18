@@ -1,0 +1,17 @@
+services:
+  jobfinder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jobfinder:local
+    env_file:
+      - .env.local
+    environment:
+      DRY_RUN: ${DRY_RUN:-1}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./main.py:/app/main.py:ro
+      - ./src:/app/src:ro
+      - ./data:/app/data
+    working_dir: /app
+    command: ["python", "main.py"]
