@@ -36,17 +36,32 @@ class ApifyLinkedInSource(JobSource):
         missing_desc = 0
         for query in config.search_queries:
             run_input = {**self.source_config.input, "query": query}
-            log.info("apify run: actor=%s query=%r", self.source_config.actor, query)
+            log.info(
+                "apify run: source=%s actor=%s location=%r query=%r",
+                self.source_config.name,
+                self.source_config.actor,
+                self.source_config.input.get("location"),
+                query,
+            )
             run = actor.call(run_input=run_input)
             if run is None:
                 log.warning("apify run returned None for query=%r", query)
                 continue
+            # apify-client v3 returns a typed Run object (not a dict). Convert to
+            # the by-alias dict shape the rest of the pipeline and costs.track_apify
+            # already expect (defaultDatasetId, stats, pricingInfo, usageTotalUsd).
+            run = run.model_dump(by_alias=True)
             dataset_id = run.get("defaultDatasetId")
             if not dataset_id:
                 log.warning("apify run has no defaultDatasetId for query=%r", query)
                 continue
             items = self.client.dataset(dataset_id).list_items().items
-            log.info("apify returned %d items for query=%r", len(items), query)
+            log.info(
+                "apify returned %d items for source=%s query=%r",
+                len(items),
+                self.source_config.name,
+                query,
+            )
             if self.cost_tracker is not None:
                 self.cost_tracker.track_apify(
                     run,

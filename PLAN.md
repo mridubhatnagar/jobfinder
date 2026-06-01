@@ -2,7 +2,14 @@
 
 ## Context
 
-User is actively job-searching and wants a daily-cron system that finds relevant job listings from multiple sources, scores them against their resume, and writes high-relevance matches to a Google Sheet. End-of-run email digest nudges them to open the sheet. System will be paused (by disabling GitHub Actions workflow) once they land a job; reusable for future searches.
+User is actively job-searching and wants a daily-cron system that finds relevant job listings from multiple sources, scores them against their resume, and writes high-relevance matches to a Google Sheet. End-of-run email digest nudges them to open the sheet.
+
+**Long-term intent: personal job-search OS.** This is infrastructure meant to outlast the current job search and be reusable across future cycles. Between cycles the system is paused (not torn down) by disabling the GitHub Actions workflow.
+
+**Design implications of multi-cycle reuse:**
+- Architecture favors durability + low-touch dormancy over feature breadth
+- Costs compound over months — needs hard daily ceiling, not just per-call discipline (see Cost tracking)
+- Resume changes across cycles — `relevance_score` is only interpretable against the resume version that produced it; row carries `resume_version` (see Sheet schema)
 
 Build is **phased**:
 - **Phase 1 (this plan):** Python core + cron + Sheets + email. Ship a working daily pipeline. **Includes lightweight skills + role-category capture so Phase 3 analytics have data from day 1.**
@@ -124,7 +131,7 @@ The Google Sheet has **two tabs**:
 **`Jobs` tab columns:**
 
 ```
-date_of_fetching | source | role_category | company_name | company_website | job_title | location | posted_date | experience_required | salary | application_link | cover_letter | relevance_score | relevance_reason | required_skills | missing_skills | resume_update_required | resume_update_reason
+date_of_fetching | source | role_category | company_name | company_website | job_title | location | posted_date | experience_required | salary | application_link | cover_letter | relevance_score | relevance_reason | required_skills | missing_skills | resume_update_required | resume_update_reason | resume_version
 ```
 
 - **date_of_fetching**: ISO date when we found it
@@ -138,6 +145,7 @@ date_of_fetching | source | role_category | company_name | company_website | job
 - **missing_skills**: comma-separated list of skills required by the JD that are **not** present in the user's resume. Powers Phase 3 gap analysis.
 - **resume_update_required**: bool — true if the LLM thinks your current resume significantly undersells you for this specific role.
 - **resume_update_reason**: brief note on what specifically to change (e.g., "embrace your FinTech experience more," "highlight K8s scaling work").
+- **resume_version**: short identifier of the resume that produced this score (e.g., short SHA of the PDF bytes, or a date stamp like `2026-05-20`). Required because the system runs across multiple job-search cycles — a score from an old resume version is not comparable to a score from a new one. Computed once per run from the freshly fetched PDF.
 
 App only writes/updates these columns. **User-added columns (e.g., `status`, `notes`) are preserved.**
 
@@ -162,6 +170,11 @@ run_timestamp | jobs_scored | apify_compute_units | apify_cost_usd
 End of run: append the row to `Costs` and include a one-liner in the email digest ("today's run cost: $0.14"). Aggregation (monthly totals, etc.) is a Sheets SUM formula or, in Phase 3, the advisor can answer on demand.
 
 Pricing constants live in one place (`src/costs.py`) — update them when Anthropic/Apify pricing changes.
+
+**Cost ceiling (hard stop):** continuous-run systems compound spend over months and surprise you. A `MAX_DAILY_COST_USD` env var caps each run:
+- At start of run, read today's accumulated `total_cost_usd` from the `Costs` tab. If already over the ceiling, log + exit before any paid call.
+- Re-check mid-run after Apify cost is computed but before LLM scoring starts — so a runaway scrape doesn't drag a big Anthropic spend behind it.
+- Per-call discipline (`max_jobs_per_run`, JD truncation, prompt caching) bounds expected cost; the ceiling bounds worst-case behavior (pricing change upstream, source flood, config typo).
 
 **Phase 2 follow-up:** the MCP server has its own costs (Cloud Run vCPU-seconds, per-request Anthropic spend when `ask_career_advisor` runs server-side). Track via server-side logs or extend the `Costs` tab with a `source` column distinguishing `cron` vs. `mcp_server`.
 

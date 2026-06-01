@@ -17,3 +17,8 @@ class EnvConfig:
     smtp_pass: str = os.environ["SMTP_PASS"]
     recipient_email: str = os.environ["RECIPIENT_EMAIL"]
     dry_run: bool = os.environ.get("DRY_RUN", "1") == "1"
+    mcp_transport: str = os.environ.get("MCP_TRANSPORT", "stdio")
+    google_oauth_client_id: str = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    google_oauth_client_secret: str = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    mcp_base_url: str = os.environ.get("MCP_BASE_URL", "")
+    mcp_allowed_emails: str = os.environ.get("MCP_ALLOWED_EMAILS", "")

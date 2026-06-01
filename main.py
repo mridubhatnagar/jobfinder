@@ -36,7 +36,7 @@ def main() -> int:
         log.info("bootstrap done — review config.yaml on Drive and re-run")
         return 0
 
-    all_postings, fetched_per_source = _fetch_all(config, cost_tracker)
+    all_postings, fetched_per_source, failed_sources = _fetch_all(config, cost_tracker)
     log.info("total fetched across all sources: %d", len(all_postings))
 
     known_links = get_known_links()
@@ -79,6 +79,7 @@ def main() -> int:
     send_digest(
         kept=kept,
         fetched_per_source=fetched_per_source,
+        failed_sources=failed_sources,
         scored_count=len(scored),
         relevance_threshold=config.relevance_threshold,
         cost_summary=summary,
@@ -89,9 +90,10 @@ def main() -> int:
 
 def _fetch_all(
     config: Config, cost_tracker: CostTracker
-) -> tuple[list[JobPosting], dict[str, int]]:
+) -> tuple[list[JobPosting], dict[str, int], list[str]]:
     all_postings: list[JobPosting] = []
     fetched_per_source: dict[str, int] = {}
+    failed_sources: list[str] = []
     for src in config.sources:
         source = _instantiate_source(src, cost_tracker)
         if source is None:
@@ -102,9 +104,24 @@ def _fetch_all(
             all_postings.extend(postings)
             fetched_per_source[src.name] = len(postings)
         except Exception:
-            log.exception("source %r failed — skipping", src.name)
+            # A source that throws is an ERROR, not an empty result. Record it
+            # separately so the digest can flag it loudly — a silent "0 fetched"
+            # is exactly what hid the apify-client v3 breakage for a week.
+            log.exception(
+                "source %r FAILED during fetch — recording 0; this is an error, "
+                "not a legitimate empty result",
+                src.name,
+            )
             fetched_per_source[src.name] = 0
-    return all_postings, fetched_per_source
+            failed_sources.append(src.name)
+    if failed_sources:
+        log.error(
+            "%d source(s) FAILED to fetch (reported as 0 but did NOT legitimately "
+            "return zero jobs): %s",
+            len(failed_sources),
+            ", ".join(failed_sources),
+        )
+    return all_postings, fetched_per_source, failed_sources
 
 
 def _instantiate_source(src, cost_tracker: CostTracker) -> JobSource | None:

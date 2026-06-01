@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jobfinder": {
+      "command": "docker",
+      "args": ["compose", "run", "-T", "--rm", "jobfinder", "python", "-m", "src.mcp_server"]
+    }
+  }
+}

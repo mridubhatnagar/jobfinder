@@ -37,14 +37,19 @@ def send_digest(
     *,
     kept: list[tuple[JobPosting, dict]],
     fetched_per_source: dict[str, int],
+    failed_sources: list[str],
     scored_count: int,
     relevance_threshold: int,
     cost_summary: dict,
 ) -> None:
-    subject = f"Jobfinder daily — {len(kept)} new matches"
+    # Flag errors in the subject so a broken source can't hide behind a
+    # "0 new matches" that looks like a normal quiet day.
+    warn = " ⚠ source errors" if failed_sources else ""
+    subject = f"Jobfinder daily — {len(kept)} new matches{warn}"
     body = _format_digest_body(
         kept=kept,
         fetched_per_source=fetched_per_source,
+        failed_sources=failed_sources,
         scored_count=scored_count,
         relevance_threshold=relevance_threshold,
         cost_summary=cost_summary,
@@ -74,6 +79,7 @@ def _format_digest_body(
     *,
     kept: list[tuple[JobPosting, dict]],
     fetched_per_source: dict[str, int],
+    failed_sources: list[str],
     scored_count: int,
     relevance_threshold: int,
     cost_summary: dict,
@@ -81,9 +87,17 @@ def _format_digest_body(
     lines = ["Fetched:"]
     total = 0
     for src, n in fetched_per_source.items():
-        lines.append(f"  {src}: {n}")
+        flag = "   ⚠ ERROR (fetch failed)" if src in failed_sources else ""
+        lines.append(f"  {src}: {n}{flag}")
         total += n
     lines.append(f"  (total: {total})")
+    if failed_sources:
+        lines.append("")
+        lines.append(
+            f"⚠ {len(failed_sources)} source(s) errored and returned no data — "
+            "this is a failure, not an empty result. Check the run logs: "
+            + ", ".join(failed_sources)
+        )
     lines.append(f"Scored: {scored_count}")
     lines.append(f"Kept (score >= {relevance_threshold}): {len(kept)}")
     lines.append("")

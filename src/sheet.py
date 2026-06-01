@@ -7,6 +7,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from env_config import EnvConfig
+from src.constants import COSTS_HEADER, JOBS_HEADER, JOBS_WRAP_COLUMNS
 from src.sources.base import JobPosting
 
 log = logging.getLogger(__name__)
@@ -14,49 +15,6 @@ log = logging.getLogger(__name__)
 SHEETS_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
-]
-
-JOBS_HEADER = [
-    "date_of_fetching",
-    "source",
-    "role_category",
-    "company_name",
-    "company_website",
-    "job_title",
-    "location",
-    "posted_date",
-    "experience_required",
-    "salary",
-    "application_link",
-    "cover_letter",
-    "relevance_score",
-    "relevance_reason",
-    "required_skills",
-    "missing_skills",
-    "resume_update_required",
-    "resume_update_reason",
-]
-
-JOBS_WRAP_COLUMNS = [
-    "N:N",
-    "O:O",
-    "P:P",
-    "R:R",
-]  # relevance_reason, required_skills, missing_skills, resume_update_reason
-
-COSTS_HEADER = [
-    "run_timestamp",
-    "jobs_scored",
-    "apify_compute_units",
-    "apify_cost_usd",
-    "anthropic_input_tokens",
-    "anthropic_output_tokens",
-    "anthropic_cache_read_tokens",
-    "anthropic_cache_creation_tokens",
-    "anthropic_web_search_requests",
-    "anthropic_cost_usd",
-    "total_cost_usd",
-    "apify_actors",  # appended at end to keep historical rows aligned
 ]
 
 
@@ -110,6 +68,16 @@ def get_known_links() -> set[str]:
     known = {v for v in values if v}
     log.info("loaded %d known application_links from sheet", len(known))
     return known
+
+
+def read_jobs() -> list[dict]:
+    ws = _open_worksheet("Jobs")
+    return ws.get_all_records()
+
+
+def read_costs() -> list[dict]:
+    ws = _open_worksheet("Costs")
+    return ws.get_all_records()
 
 
 def append_jobs(rows: list[tuple[JobPosting, dict]]) -> None:

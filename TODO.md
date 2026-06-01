@@ -61,7 +61,7 @@ Derived from `PLAN.md`. 25 tasks, grouped by stage.
 
 ## CI
 
-- [ ] **18. Write `.github/workflows/daily.yml`**
+- [x] **18. Write `.github/workflows/daily.yml`**
   Daily cron schedule (UTC) + `workflow_dispatch` for manual triggers. Workflow builds the Docker image then runs the container with `docker compose run --rm jobfinder` (or `docker run`), injecting all GitHub Secrets as env vars. Public-repo logs are sanitized by `SafeFormatter`; workflow should not echo secrets or run any extra debug commands.
 
 ## External setup
@@ -72,7 +72,7 @@ Derived from `PLAN.md`. 25 tasks, grouped by stage.
 - [x] **20. Generate Gmail app password + sign up for Apify**
   Gmail 2FA + app password generated. Apify account active with $5/month free tier.
 
-- [ ] **21. Create public GitHub repo + add all secrets**
+- [x] **21. Create public GitHub repo + add all secrets**
   Create the public repo. Add secrets: `APIFY_TOKEN`, `ANTHROPIC_API_KEY`, `GCP_SERVICE_ACCOUNT_JSON` (single line), `GOOGLE_SHEET_ID`, `GOOGLE_DRIVE_RESUME_FILE_ID`, `GOOGLE_DRIVE_CONFIG_FILE_ID`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `RECIPIENT_EMAIL`. `.gitignore` already excludes local copies.
 
 ## Verification
@@ -80,11 +80,92 @@ Derived from `PLAN.md`. 25 tasks, grouped by stage.
 - [x] **22. Local dry-run via Docker Compose**
   Full live run completed (`DRY_RUN=0 docker compose run --rm jobfinder python main.py`). Funnel: 401 fetched → 227 after age → 20 after location → 17 after employment type → 17 scored → 2 kept (threshold 70) → 2 rows appended to Jobs, 1 cost row to Costs, 1 digest email sent. Apify cost tracking corrected mid-run: was returning $0 because `usageTotalUsd` settles async; now derived from `items × pricingPerEvent.eventPriceUsd` and matches exactly ($2.005 for 401 items on apimaestro). Total run cost on apimaestro ~$2.34; `maxItems` was inert on that actor (always returned ~100/query). Subsequently switched to crawlworks (~$0.60/run, 3.3× cheaper, `jobsToFetch` honored) — see task #7.
 
-- [ ] **23. First GH Actions run: bootstrap + manual verify**
-  Push code. First run bootstraps `search_queries` into Drive `config.yaml` and exits with email. Review/edit bootstrapped queries on Drive. Manually trigger `workflow_dispatch` for the real first run. Verify: `Jobs` tab populated, `Costs` tab row appended, digest email received, GH Actions logs contain no PII or JD text.
+- [x] **23. First GH Actions run: bootstrap + manual verify**
+  Push code. First run bootstraps `search_queries` into Drive `config.yaml` and exits with email. Review/edit bootstrapped queries on Drive. Manually trigger `workflow_dispatch` for the real first run. Verify: `Jobs` tab populated, `Costs` tab row appended, digest email received, GH Actions logs contain no PII or JD text. Live: daily cron is running and digest emails are arriving.
 
 - [ ] **24. Threshold tuning + add-a-source smoke tests**
   Week 1: lower `relevance_threshold` to ~50, observe surfaced jobs, adjust to the right signal level. Smoke test plugin pattern: add a second Apify entry in `config.yaml` (no code change) and confirm pipeline picks it up; add a stub `src/sources/<company>.py` + register in config and confirm. Validates the "adding a source = config edit only" promise.
 
 - [ ] **25. (OBSERVATION-GATED) Add Naukri / Indeed / Instahyre as sources**
   Trigger: ≥1 week of LinkedIn-only digests reveals gaps (specific roles or companies consistently missing). Order of effort/payoff: **Naukri first** (India-specific tech coverage, Apify actor expected), **Indeed second** (broad aggregator, Apify actor expected), **Instahyre last** (smaller platform, likely needs a custom `src/sources/instahyre.py` scraper). Code prerequisite for the first non-LinkedIn Apify source: today's `src/sources/apify_linkedin.py` hardcodes crawlworks's LinkedIn output fields in `_to_posting`. Options: (A) generalize via a `field_map` in `config.yaml`, or (B) duplicate the file per actor (e.g., `apify_indeed.py`) and register via `type: plugin`. Pick B for the first addition; A becomes worth it at 3+ Apify sources.
+
+---
+
+# Jobfinder — Long-running hardening
+
+Cross-cutting changes that make the system suitable for **multi-cycle reuse** as personal infrastructure (see PLAN.md "Long-term intent"). Independent of Phase 2 MCP work — applies to the cron pipeline itself.
+
+- [ ] **LR-1. Stamp `resume_version` on every scored job row**
+  Add `resume_version` column at the end of the `Jobs` tab schema. Compute once per run from the freshly fetched resume PDF (short SHA of the bytes, or date stamp like `2026-05-20` — pick whichever is cheaper to read at a glance). Threaded through `src/scoring.py` so every scored row carries it. Required because the system runs across multiple job-search cycles — a score from an old resume version is not comparable to a score from a new one. Existing rows stay blank (no backfill).
+
+- [ ] **LR-2. Hard daily cost ceiling that short-circuits the run**
+  Add `MAX_DAILY_COST_USD` env var (default e.g. $1.00). At start of `main.py`, read today's accumulated `total_cost_usd` from the `Costs` tab; if already over the ceiling, log + exit before any paid call. Re-check after Apify cost is known but before LLM scoring starts. Bounds worst-case behavior (upstream pricing change, source flood, config typo) without changing per-call discipline.
+
+---
+
+# Jobfinder — Phase 2 TODO
+
+MCP server exposing read tools over the existing `Jobs` + `Costs` sheets. Cron remains the only writer; MCP only reads.
+
+**Confirmed scope decisions (2026-05-20):**
+- Library: `fastmcp` (decorator-based, simpler stdio → HTTP transition)
+- v1 tool surface: `get_jobs(filters)` + `get_stats(days)`. Narrow tools (`get_top_matches`, `get_score_reason`) are subsumed — Claude composes them via the primitive. Add later only if LLM struggles.
+- No `run_pass` tool. MCP reads the Sheet only; cron is the writer.
+- Sheet reads: every call (fresh, <1s at current volume; no cache).
+- Build order: stdio local → HTTP local (ngrok) → Cloud Run.
+
+## Stdio (local, fast iteration)
+
+- [x] **P2-1. Add `fastmcp` to `requirements.txt`**
+  Pinned `fastmcp>=2.0.0` (resolved to 3.3.1). Image rebuilt.
+
+- [x] **P2-2. Add `read_jobs()` + `read_costs()` helpers to `src/sheet.py`**
+  Thin wrappers around `_open_worksheet(...).get_all_records()`. Reuse the existing gspread client path; no new auth surface.
+
+- [x] **P2-3. Create `src/mcp_server.py` with FastMCP instance + `get_jobs` + `get_stats`**
+  Single file. Logging to stderr only. Schema constants moved to `src/constants.py`.
+
+- [x] **P2-4. Local stdio smoke test against the live Sheet**
+  Verified live: `get_stats(14)` → 27 jobs / 11 runs / $9.95 spend; `get_jobs(min_score=70)` → 5 matches, properly sorted.
+
+- [x] **P2-5. Wire into Claude Code via `.mcp.json`**
+  `.mcp.json` at repo root registers the `jobfinder` server with `docker compose run -T --rm jobfinder python -m src.mcp_server`. Round-trip queries from Claude Code verified against the live Sheet.
+
+## HTTP (local, multi-client testing)
+
+- [x] **P2-6. Switch FastMCP to HTTP transport on a local port**
+  Added `MCP_TRANSPORT` env var (default `stdio`) to `env_config.py` + `.env.example`. Forwarded via `docker-compose.yml` `environment:` block. `src/mcp_server.py` `__main__` branches on transport: HTTP runs `mcp.run(transport="http", host="0.0.0.0", port=8000)`. Also added `env_config.py` to compose bind mounts so future env-var edits are live without rebuild. Validated: `MCP_TRANSPORT=http docker compose run --service-ports --rm jobfinder python -m src.mcp_server` → "Starting MCP server 'jobfinder' with transport 'http' on http://0.0.0.0:8000/mcp".
+
+- [x] **P2-7. Expose via ngrok + connect from a remote client**
+  `ngrok http 8000` → connected from claude.ai web custom connector (no auth, supervised one-off). Both tools (`get_jobs`, `get_stats`) listed and invoked successfully; end-to-end round-trip verified by asking claude.ai for the most relevant job — data came back from the live Sheet. Cross-client portability promise from PLAN.md is now validated.
+
+- [x] **P2-8. Google OAuth + email allowlist (replaces static API key) — load-bearing**
+  Scope expanded from static `Authorization: Bearer` (rejected because claude.ai web and ChatGPT custom connectors require OAuth) to full OAuth via FastMCP's `GoogleProvider` (OAuth Proxy pattern). New env vars: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `MCP_BASE_URL`, `MCP_ALLOWED_EMAILS`. HTTP mode fails fast at startup if any are missing; stdio mode unaffected. Tools gated by `require_allowed_email` decorator that reads `email` + `email_verified` from the verified access token claims. Smoke test (local HTTP, port 8000) verified: (1) unauth POST → 401 + `WWW-Authenticate`, (2) allowed email completes OAuth and gets real Sheet data, (3) non-allowed email completes OAuth but tool call returns `Forbidden`; server logs `rejected tool call; email_verified=True allowlisted=False` with no PII leakage. GCP OAuth client configured (consent screen in Testing mode, redirect URI `http://localhost:8000/auth/callback`; Cloud Run URL gets added in P2-11).
+
+- [x] **P2-9. Per-IP token-bucket rate limit (replaces per-key after P2-8 expanded)**
+  `src/rate_limit.py` `RateLimitMiddleware` (Starlette `BaseHTTPMiddleware`): 20 req/min, burst 10, keyed by `X-Forwarded-For` leftmost (Cloud Run-compatible) with `request.client.host` fallback. Mounted globally via `mcp.run(transport="http", middleware=[Middleware(RateLimitMiddleware)])`, so it gates `/mcp`, `/authorize`, `/register`, `/token`, `/auth/callback`, and the `.well-known/*` OAuth discovery paths — pre-auth surface is bounded, not just tool calls. Returns 429 with a `Retry-After` header. In-memory bucket dict; growth unbounded under attack but fine for v1 single instance. Smoke-tested locally: rapid 30 requests → 10×401 then 20×429; separate XFF values get separate buckets; same XFF gets bucketed together regardless of source IP.
+
+## Cloud Run deploy
+
+- [ ] **P2-10. Add MCP server entrypoint to Dockerfile / compose**
+  Same image, command overridden (`python -m src.mcp_server`). No second build path.
+
+- [ ] **P2-11. Deploy to Cloud Run**
+  `gcloud run deploy --source .` with command override. Secrets via Cloud Run env vars (or Secret Manager for `GCP_SERVICE_ACCOUNT_JSON`). Scale to zero, 1 max instance for v1.
+
+- [ ] **P2-12. Wire production URL + API key into each MCP client**
+  Claude Code `.mcp.json`, ChatGPT custom connector, claude.ai integration. Document each in README.
+
+- [ ] **P2-13. Update README + `.env.example` for Phase 2**
+  New section: local stdio dev loop, local HTTP dev loop, Cloud Run deploy, client config snippets, API key generation + rotation.
+
+## Deferred past Phase 2 v1
+
+- [ ] **P2-D1. (DEFERRED) Narrow convenience tools (`get_top_matches`, `get_score_reason`)**
+  Add only if real usage shows the LLM stumbling on the primitive. Both are one-call wrappers over `get_jobs`.
+
+- [ ] **P2-D2. (DEFERRED) `get_resume()` tool**
+  Foundation for Phase 3 advisor. Not needed for v1 read-only chat against the Sheet.
+
+- [ ] **P2-D3. (DEFERRED) MCP server cost tracking**
+  Per-request Anthropic spend (when advisor tools land in Phase 3) + Cloud Run vCPU-seconds. Add `source` column to `Costs` tab to distinguish `cron` vs `mcp_server`.
