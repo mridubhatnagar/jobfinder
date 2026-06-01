@@ -30,6 +30,20 @@ def _open_worksheet(tab_name: str) -> gspread.Worksheet:
     return sh.worksheet(tab_name)
 
 
+def _open_or_create_worksheet(
+    tab_name: str, header: list[str], wrap_columns: list[str] | None = None
+) -> gspread.Worksheet:
+    client = _gspread_client()
+    sh = client.open_by_key(EnvConfig.google_sheet_id)
+    try:
+        ws = sh.worksheet(tab_name)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=tab_name, rows=1000, cols=max(26, len(header)))
+        log.info("created worksheet %r", tab_name)
+    _ensure_header(ws, header, wrap_columns)
+    return ws
+
+
 def _ensure_header(
     ws: gspread.Worksheet,
     header: list[str],
@@ -59,14 +73,20 @@ def _ensure_header(
         )
 
 
-def get_known_links() -> set[str]:
-    ws = _open_worksheet("Jobs")
+def get_known_links(tab_name: str) -> set[str]:
+    # Read-only: if the platform's tab doesn't exist yet, there are no known
+    # links (and we must NOT create it here — keeps DRY_RUN side-effect-free).
+    try:
+        ws = _open_worksheet(tab_name)
+    except gspread.WorksheetNotFound:
+        log.info("tab %r not found — 0 known links", tab_name)
+        return set()
     col = JOBS_HEADER.index("application_link") + 1  # 1-indexed
     values = ws.col_values(col)
     if values and values[0] == "application_link":
         values = values[1:]
     known = {v for v in values if v}
-    log.info("loaded %d known application_links from sheet", len(known))
+    log.info("loaded %d known application_links from tab %r", len(known), tab_name)
     return known
 
 
@@ -80,15 +100,16 @@ def read_costs() -> list[dict]:
     return ws.get_all_records()
 
 
-def append_jobs(rows: list[tuple[JobPosting, dict]]) -> None:
+def append_jobs(rows: list[tuple[JobPosting, dict]], tab_name: str) -> None:
     if not rows:
-        log.info("no new jobs to write")
+        log.info("no new jobs to write to %r", tab_name)
         return
-    ws = _open_worksheet("Jobs")
-    _ensure_header(ws, JOBS_HEADER, wrap_columns=JOBS_WRAP_COLUMNS)
+    ws = _open_or_create_worksheet(
+        tab_name, JOBS_HEADER, wrap_columns=JOBS_WRAP_COLUMNS
+    )
     new_rows = [_row_for_job(p, s) for p, s in rows]
     ws.append_rows(new_rows, value_input_option="USER_ENTERED")
-    log.info("appended %d rows to Jobs", len(rows))
+    log.info("appended %d rows to %r", len(rows), tab_name)
 
 
 def append_cost_row(cost_summary: dict) -> None:
@@ -119,6 +140,7 @@ def _row_for_job(p: JobPosting, score: dict) -> list[Any]:
         ", ".join(score.get("missing_skills") or []),
         bool(score.get("resume_update_required")),
         score.get("resume_update_reason") or "",
+        "",  # status — user-filled; app writes blank and never overwrites it
     ]
 
 

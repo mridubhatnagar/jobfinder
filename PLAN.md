@@ -596,4 +596,73 @@ The system is considered *complete* at Phase 4. Phase 5 is a contingency, not a 
 - Recruiter / hiring-manager extraction
 - LLM-tweaked resume per job
 - Salary normalization across currencies
-- Reposted-job dedup (same job, different URL)
+- Reposted-job dedup (same job, different URL) — **superseded 2026-06-01**: handled manually via the `status` column in the multi-platform phase below (cross-postings are kept, user decides)
+
+---
+
+## Multi-platform sources — one platform/day (added 2026-06-01)
+
+**Goal:** Expand from LinkedIn-only to **5 dedicated job platforms**, fetching **one platform per day** on a weekday rotation, each writing to its **own Sheet tab**. The user tracks/applies per platform and manages cross-postings manually via a `status` column. No automated cross-platform dedup.
+
+**Why one-per-day:** keeps daily volume human-manageable (apply to one platform's batch, then move on), keeps Apify cost inside the $5 free tier, and isolates per-platform failures (a broken actor takes down one day, not all platforms).
+
+### Platforms & actors (one actor = one platform = one mapper)
+
+| Platform | Actor | Status (probed 2026-06-01) |
+|---|---|---|
+| LinkedIn | `crawlworks/linkedin-jobs-scraper` | live (keep — already tuned) |
+| Indeed | `misceres/indeed-scraper` | ✅ verified — India jobs, salary + description |
+| Naukri | `memo23/naukri-scraper` | ✅ verified — rich output (experience, keySkills, salaryDetail) |
+| CutShort | `thirdwatch/cutshort-jobs-scraper` | ✅ verified — cleanest output (salary INR, experience_range, skills); **skills-based input, no free-text query** |
+| Wellfound | `crawlerbros/wellfound-scraper` | ⛔ deferred — runs, but 0 results for India and **no description field** (breaks scoring) |
+
+Rotation: Mon LinkedIn · Tue Indeed · Wed Naukri · Thu CutShort. Wellfound deferred until a usable India source is found.
+
+**Unified `agentx/all-jobs-scraper` evaluated and rejected** (probe 2026-06-01): covers LinkedIn/Indeed/Naukri but with thinner per-platform data (LinkedIn rows lacked salary/skills; Naukri only 4 short rows), is a single point of failure across platforms, and its `max_results` is per-platform (fans out — hard to bound). Dedicated actors give richer data, failure isolation, and direct per-actor cost caps. Also moot under one-platform-per-day (you'd never run a multi-platform actor for a single day's platform).
+
+### Config schema additions
+
+Backward-compatible additions to `ApifySource` (existing crawlworks sources keep working with defaults):
+- `mapper: str = "crawlworks"` — selects the output→`JobPosting` mapping function
+- `query_param: str | None = "query"` — which input key each `search_query` fills (Indeed `position`, Naukri `searchQuery`). **`None` for skills-based actors (CutShort)** that take no free-text query — those run once with static `input` (e.g. `skills: [...]`) instead of looping `search_queries`.
+- `max_total_charge_usd: float | None` — hard per-run Apify charge cap, passed to `actor.call` (Apify-enforced even if the actor's own `max_results` is inert)
+
+New top-level `schedule` mapping weekday → source name:
+```yaml
+schedule:
+  monday: linkedin
+  tuesday: indeed
+  wednesday: naukri
+  thursday: cutshort
+  # friday: wellfound   # deferred — see actor table
+```
+
+### Pipeline change (`main.py`)
+- Resolve today's weekday → source via `schedule`. If unmapped (e.g., weekend), log + exit (no paid run).
+- Fetch only that one source; filter/score/append unchanged except the write target tab.
+
+### Mapper registry (`src/sources/apify.py`, generalized from `apify_linkedin.py`)
+- `MAPPERS = {"crawlworks": ..., "indeed": ..., "naukri": ..., "wellfound": ..., "cutshort": ...}`
+- `fetch_jobs` injects the query via `query_param`, selects the mapper by name, passes `max_total_charge_usd` to `actor.call`.
+- One `_to_posting_*` per actor output shape, each built from its probe.
+
+### Sheet: per-platform tabs + `status` column
+- One tab per platform (`LinkedIn`, `Indeed`, `Naukri`, `Wellfound`, `CutShort`), each using `JOBS_HEADER`; auto-create if missing.
+- `append_jobs(rows, tab)` targets the platform's tab. `Costs` tab stays single/shared.
+- **`status` column**: plain text, user-filled. Convention: **blank = not applied, `Applied` = applied** (no emoji/icons — they add friction). The app writes new rows with this column blank and **never writes or overwrites a value** in it (preserved like existing user columns). Present in the header so it's ready to fill. This is the manual cross-posting control replacing automated dedup — and the reason same-URL dedup (below) must not re-insert a row and lose an `Applied` mark.
+
+### Dedup
+- **No cross-platform content dedup** (cross-postings kept; user decides via `status`). Consistent with the long-standing "reposted-job dedup out of scope" note above.
+- **Keep same-URL re-add dedup, scoped per-tab** — `get_known_links(tab)` reads that tab's `application_link` column so the *identical* posting isn't re-inserted on the next weekly rotation (which would otherwise blank-out the user's `status` on a fresh row). **[DECISION D1 — confirm: keep same-URL dedup.]**
+
+### MCP
+- `get_jobs` / `get_stats` aggregate across all platform tabs (was the single `Jobs` tab).
+
+### Cost
+- Per-source `max_total_charge_usd` hard cap; also retro-fixes the current gap where the pipeline passes no cap to `actor.call`. Ties into LR-2 (daily cost ceiling).
+
+### Open decisions / risks
+- **D1:** keep same-URL dedup (recommended) vs literally no dedup at all.
+- CutShort actor has **no reviews** — validate output quality + cost in the probe before committing; fallback is investigating cutshort.io's backend (Greenhouse/Lever vs custom).
+- Indeed/Naukri/Wellfound actor picks are candidates pending bounded probes.
+- Naukri/CutShort may need **skill-based keywords** rather than role-based `search_queries` (Hirist required this) — confirm per probe.

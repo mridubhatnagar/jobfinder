@@ -38,6 +38,7 @@ JOBS_HEADER = [
     "missing_skills",
     "resume_update_required",
     "resume_update_reason",
+    "status",  # user-filled: blank = not applied, "Applied" = applied. App never writes a value.
 ]
 
 # relevance_reason, required_skills, missing_skills, resume_update_reason

@@ -17,6 +17,13 @@ class ApifySource(BaseModel):
     name: str
     actor: str
     input: dict = Field(default_factory=dict)
+    # Output→JobPosting mapper name (see src/sources/apify.py MAPPERS).
+    mapper: str = "crawlworks"
+    # Input key each search_query fills; None for skills-based actors that take
+    # no free-text query (they run once with their static `input`).
+    query_param: str | None = "query"
+    # Hard per-run Apify charge cap (USD), enforced by Apify.
+    max_total_charge_usd: float | None = None
 
 
 class PluginSource(BaseModel):
@@ -40,6 +47,9 @@ class Config(BaseModel):
     timezone: str
     search_queries: list[str] = Field(default_factory=list)
     sources: list[Source]
+    # weekday name (lowercase) -> source name. The cron fetches only that day's
+    # source. Empty = legacy behavior (all sources every run).
+    schedule: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("experience_range")
     @classmethod
@@ -53,13 +63,20 @@ class Config(BaseModel):
 
 
 def load_config() -> Config:
-    service = get_drive_service()
-    content = (
-        service.files()
-        .get_media(fileId=EnvConfig.google_drive_config_file_id)
-        .execute()
-    )
-    raw = yaml.safe_load(content.decode("utf-8")) or {}
+    # Local override for testing config changes without touching the Drive file
+    # (which the live cron reads). Set LOCAL_CONFIG_PATH to a local YAML.
+    if EnvConfig.local_config_path:
+        with open(EnvConfig.local_config_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        log.info("loaded config from local path %s", EnvConfig.local_config_path)
+    else:
+        service = get_drive_service()
+        content = (
+            service.files()
+            .get_media(fileId=EnvConfig.google_drive_config_file_id)
+            .execute()
+        )
+        raw = yaml.safe_load(content.decode("utf-8")) or {}
     config = Config.model_validate(raw)
     log.info(
         "loaded config: %d locations, %d sources, %d queries",

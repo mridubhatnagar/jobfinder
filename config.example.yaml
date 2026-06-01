@@ -1,36 +1,104 @@
 # Jobfinder configuration example
-# Real values should be in config.yaml on Google Drive
+# Real values live in config.yaml on Google Drive (not in this repo).
+#
+# Multi-platform model (see PLAN.md "Multi-platform sources — one platform/day"):
+#   - One platform is fetched per day, chosen by `schedule` (weekday -> source name).
+#   - Each platform writes to its own tab in the Google Sheet.
+#   - Cross-postings are NOT auto-deduped; you triage them manually via the `status`
+#     column in the Sheet.
+# NOTE: this documents the TARGET schema for the multi-platform phase. The new
+# per-source fields (mapper / query_param / max_total_charge_usd) and `schedule`
+# require the MP-2/MP-3 code changes to be in place before config.yaml validates.
 
 preferred_locations: ["Bangalore", "Remote", "Hyderabad"]
 max_age_days: 7
 relevance_threshold: 70
 employment_types: ["full-time", "long-term-contract"]
-experience_range: [2, 8]              # [min, max] in years
-blocked_companies: []                  # company names to skip
+experience_range: [4, 8]               # [min, max] in years
+blocked_companies: []                   # company names to skip
 excluded_title_keywords: ["intern", "founding engineer"]
-max_jobs_per_run: 200                  # safety cap on per-run scoring volume
-timezone: "Asia/Kolkata"               # display only; cron schedule is UTC
+max_jobs_per_run: 200                   # safety cap on per-run scoring volume
+timezone: "Asia/Kolkata"                # display only; cron schedule is UTC
 
-search_queries: []                      # Will be bootstrapped if empty
+# Role-based search terms (bootstrapped from resume if empty). Used by sources
+# that take a free-text query (LinkedIn, Indeed, Naukri). Skills-based sources
+# (CutShort) ignore these and use their own `input` instead.
+search_queries:
+  - "Senior Backend Engineer"
+  - "Staff Engineer"
 
+# Weekday -> source name. The daily cron fetches only that day's source.
+# Unmapped days (e.g. weekends) exit without a run.
+schedule:
+  monday: linkedin
+  tuesday: indeed
+  wednesday: naukri
+  thursday: cutshort
+  # friday: wellfound      # deferred — see note on the wellfound source below
+
+# Each source: one actor = one platform = one mapper.
+#   mapper               selects the output->JobPosting mapping in code
+#   query_param          which input key each search_query fills; OMIT for
+#                        skills-based actors that don't take a free-text query
+#   max_total_charge_usd hard per-run Apify charge cap (Apify-enforced)
 sources:
   - type: apify
     name: linkedin
     actor: crawlworks/linkedin-jobs-scraper
+    mapper: crawlworks
+    query_param: query
+    max_total_charge_usd: 0.50
     input:
-      # `query` is injected per search_query at runtime. Everything below is passed through.
-      # Pricing: $0.0015/job (base tier). Free tier ($5/mo) covers ~3300 jobs.
       location: "India"
-      jobsToFetch: 100
-      # Work-mode filters (booleans). All-false = no filter applied by actor.
-      remote: false
-      hybrid: false
-      # Seniority filters (booleans). Mix as needed.
+      jobsToFetch: 50
       midSeniorLevel: true
       associate: true
-      # Employment-type filters (booleans).
       fullTime: true
       contract: true
-  - type: plugin
-    name: razorpay
-    module: src.sources.razorpay
+
+  - type: apify
+    name: indeed
+    actor: misceres/indeed-scraper        # verified 2026-06-01: India jobs, salary + description present
+    mapper: indeed
+    query_param: position
+    max_total_charge_usd: 0.50
+    input:
+      country: "IN"
+      location: "India"
+      maxItemsPerSearch: 25
+
+  - type: apify
+    name: naukri
+    actor: memo23/naukri-scraper          # verified 2026-06-01: rich India output (experience, keySkills, salaryDetail)
+    mapper: naukri
+    query_param: searchQuery
+    max_total_charge_usd: 0.50
+    input:
+      platform: naukri
+      location: "India"
+      maximumJobs: 25
+      timeFilter: "7d"
+      includeDescription: true
+
+  - type: apify
+    name: cutshort
+    actor: thirdwatch/cutshort-jobs-scraper  # verified 2026-06-01: clean India output (salary_min/max INR, experience_range, skills)
+    mapper: cutshort
+    # skills-based: no query_param (does not take a free-text role query).
+    max_total_charge_usd: 0.50
+    input:
+      skills: ["python", "java", "nodejs", "golang", "backend"]
+      maxResults: 25
+
+  # Wellfound — DEFERRED (probed 2026-06-01). The actor runs, but returned 0
+  # results for location:India (it's US/startup-heavy) and its output has NO job
+  # description field, which the LLM scorer needs. Revisit with a better India
+  # source or a different actor before enabling.
+  # - type: apify
+  #   name: wellfound
+  #   actor: crawlerbros/wellfound-scraper
+  #   mapper: wellfound
+  #   query_param: jobTitle
+  #   max_total_charge_usd: 0.50
+  #   input:
+  #     maxItems: 25

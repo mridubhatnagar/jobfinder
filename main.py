@@ -1,5 +1,6 @@
 import importlib
 import logging
+from collections import defaultdict
 from datetime import date
 
 from env_config import EnvConfig
@@ -12,7 +13,7 @@ from src.logging_config import setup_logging
 from src.resume import load_resume_text
 from src.scoring import score_postings_sync
 from src.sheet import append_cost_row, append_jobs, get_known_links
-from src.sources.apify_linkedin import ApifyLinkedInSource
+from src.sources.apify import ApifyJobSource
 from src.sources.base import JobPosting, JobSource
 
 log = logging.getLogger(__name__)
@@ -36,10 +37,20 @@ def main() -> int:
         log.info("bootstrap done — review config.yaml on Drive and re-run")
         return 0
 
-    all_postings, fetched_per_source, failed_sources = _fetch_all(config, cost_tracker)
-    log.info("total fetched across all sources: %d", len(all_postings))
+    sources = _sources_to_run(config)
+    if not sources:
+        log.info("no source scheduled for %s — nothing to run, exiting", _today_name())
+        return 0
+    log.info("running source(s) for %s: %s", _today_name(), [s.name for s in sources])
 
-    known_links = get_known_links()
+    all_postings, fetched_per_source, failed_sources = _fetch_all(
+        sources, config, cost_tracker
+    )
+    log.info("total fetched: %d", len(all_postings))
+
+    known_links: set[str] = set()
+    for s in sources:
+        known_links |= get_known_links(s.name)
     filtered = apply_filters(all_postings, config, known_links)
     filtered.sort(key=lambda p: p.posted_date or date.min, reverse=True)
     if len(filtered) > config.max_jobs_per_run:
@@ -74,7 +85,11 @@ def main() -> int:
         )
         return 0
 
-    append_jobs(kept)
+    by_tab: dict[str, list] = defaultdict(list)
+    for p, s in kept:
+        by_tab[p.source or "Jobs"].append((p, s))
+    for tab, tab_rows in by_tab.items():
+        append_jobs(tab_rows, tab)
     append_cost_row(summary)
     send_digest(
         kept=kept,
@@ -88,13 +103,40 @@ def main() -> int:
     return 0
 
 
+def _today_name() -> str:
+    return date.today().strftime("%A").lower()
+
+
+def _sources_to_run(config: Config) -> list:
+    # FORCE_SOURCE (dev/ops) wins; else the weekday schedule; else legacy = all.
+    if EnvConfig.force_source:
+        matched = [s for s in config.sources if s.name == EnvConfig.force_source]
+        if not matched:
+            log.warning("FORCE_SOURCE=%r not in config.sources", EnvConfig.force_source)
+        return matched
+    if not config.schedule:
+        log.info("no schedule configured — running all sources (legacy)")
+        return list(config.sources)
+    name = config.schedule.get(_today_name())
+    if not name:
+        return []
+    matched = [s for s in config.sources if s.name == name]
+    if not matched:
+        log.warning(
+            "schedule maps %s -> %r but no such source in config.sources",
+            _today_name(),
+            name,
+        )
+    return matched
+
+
 def _fetch_all(
-    config: Config, cost_tracker: CostTracker
+    sources: list, config: Config, cost_tracker: CostTracker
 ) -> tuple[list[JobPosting], dict[str, int], list[str]]:
     all_postings: list[JobPosting] = []
     fetched_per_source: dict[str, int] = {}
     failed_sources: list[str] = []
-    for src in config.sources:
+    for src in sources:
         source = _instantiate_source(src, cost_tracker)
         if source is None:
             continue
@@ -126,7 +168,7 @@ def _fetch_all(
 
 def _instantiate_source(src, cost_tracker: CostTracker) -> JobSource | None:
     if isinstance(src, ApifySource):
-        return ApifyLinkedInSource(src, cost_tracker=cost_tracker)
+        return ApifyJobSource(src, cost_tracker=cost_tracker)
     if isinstance(src, PluginSource):
         try:
             importlib.import_module(src.module)

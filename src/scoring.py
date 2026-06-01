@@ -72,44 +72,51 @@ async def _score_one(
     cost_tracker: CostTracker,
 ) -> Optional[tuple[JobPosting, dict]]:
     async with semaphore:
-        try:
-            response = await client.messages.create(
-                model=MODEL,
-                max_tokens=SCORING_MAX_TOKENS,
-                system=[
-                    {
-                        "type": "text",
-                        "text": SCORING_SYSTEM_PROMPT_TEMPLATE.format(
-                            resume=resume_text
-                        ),
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=[
-                    {
-                        "role": "user",
-                        "content": SCORING_USER_PROMPT_TEMPLATE.format(
-                            job_title=posting.job_title,
-                            company_name=posting.company_name,
-                            location=posting.location,
-                            description=(posting.description or "")[:JD_TRUNCATE_CHARS],
-                        ),
-                    }
-                ],
-                tools=[WEB_SEARCH_TOOL, SCORE_JOB_TOOL],
-                tool_choice={"type": "auto"},
-            )
-            cost_tracker.track_anthropic(response)
-            score = _extract_score(response)
-            return (posting, score)
-        except Exception as e:
-            log.warning(
-                "scoring failed for company=%r role=%r: %s",
-                posting.company_name,
-                posting.role_category,
-                type(e).__name__,
-            )
-            return None
+        # One retry: the model occasionally skips the tool call or returns a
+        # transient error. The tolerant ScoreOutput schema handles format drift;
+        # this catches the rarer "didn't call score_job" / transient-API cases.
+        for attempt in range(2):
+            try:
+                response = await client.messages.create(
+                    model=MODEL,
+                    max_tokens=SCORING_MAX_TOKENS,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": SCORING_SYSTEM_PROMPT_TEMPLATE.format(
+                                resume=resume_text
+                            ),
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": SCORING_USER_PROMPT_TEMPLATE.format(
+                                job_title=posting.job_title,
+                                company_name=posting.company_name,
+                                location=posting.location,
+                                description=(posting.description or "")[
+                                    :JD_TRUNCATE_CHARS
+                                ],
+                            ),
+                        }
+                    ],
+                    tools=[WEB_SEARCH_TOOL, SCORE_JOB_TOOL],
+                    tool_choice={"type": "auto"},
+                )
+                cost_tracker.track_anthropic(response)
+                return (posting, _extract_score(response))
+            except Exception as e:
+                if attempt == 0:
+                    continue
+                log.warning(
+                    "scoring failed for company=%r role=%r: %s",
+                    posting.company_name,
+                    posting.role_category,
+                    type(e).__name__,
+                )
+                return None
 
 
 def _extract_score(response) -> dict:

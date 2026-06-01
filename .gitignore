@@ -42,3 +42,6 @@ probe_*.py
 .idea/
 *.swp
 *~
+
+# local test config (LOCAL_CONFIG_PATH)
+config.local.yaml

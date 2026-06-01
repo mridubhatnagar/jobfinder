@@ -169,3 +169,38 @@ MCP server exposing read tools over the existing `Jobs` + `Costs` sheets. Cron r
 
 - [ ] **P2-D3. (DEFERRED) MCP server cost tracking**
   Per-request Anthropic spend (when advisor tools land in Phase 3) + Cloud Run vCPU-seconds. Add `source` column to `Costs` tab to distinguish `cron` vs `mcp_server`.
+
+---
+
+# Jobfinder — Multi-platform expansion (one platform/day)
+
+Added 2026-06-01. See PLAN.md "Multi-platform sources — one platform/day". Expand LinkedIn-only → 5 dedicated platforms, one per day on a weekday rotation, each in its own Sheet tab; cross-postings kept and managed manually via a `status` column (no automated dedup).
+
+**Decisions to confirm:** D1 (keep same-URL re-add dedup); final actor picks per platform.
+
+- [ ] **MP-0. Land the apify-client v3 fix first**
+  The pending requirements pin + `model_dump(by_alias=True)` boundary fix + `_fetch_all` hardening must be committed/pushed and confirmed live before stacking multi-platform work on top.
+
+- [ ] **MP-1. Probe + select dedicated actors (bounded, authorized per-run)**
+  For Indeed (`misceres/indeed-scraper`), Naukri (`memo23/naukri-scraper`), Wellfound (`crawlerbros/wellfound-scraper`), CutShort (`thirdwatch/cutshort-jobs-scraper`): pull each input schema (free), then run a small probe with a hard `max_total_charge_usd` cap to confirm India coverage, output shape, and per-job cost. Record the output→`JobPosting` mapping per actor. CutShort has no reviews — scrutinize quality. LinkedIn stays on crawlworks (no probe needed).
+
+- [ ] **MP-2. Generalize `ApifySource` (`src/config.py`)**
+  Add `mapper` (default `crawlworks`), `query_param` (default `query`), `max_total_charge_usd` (optional). Add top-level `schedule` (weekday → source name) to `Config`. Backward-compatible — existing crawlworks sources unaffected.
+
+- [ ] **MP-3. Generalize the Apify source + mapper registry**
+  Rename `src/sources/apify_linkedin.py` → `apify.py`, class `ApifyJobSource`. Add `MAPPERS` registry + one `_to_posting_*` per actor output shape (from MP-1 probes). `fetch_jobs` uses `query_param`, selects the mapper, passes `max_total_charge_usd` to `actor.call`. Update `main.py` imports.
+
+- [ ] **MP-4. Weekday rotation in `main.py`**
+  Resolve today's weekday → source via `config.schedule`; if unmapped, log + exit. Fetch only that source.
+
+- [ ] **MP-5. Per-platform Sheet tabs + `status` column (`src/sheet.py`)**
+  One tab per platform (auto-create from `JOBS_HEADER`); `append_jobs(rows, tab)` targets the platform tab. Add `status` to the header as a user-filled column the app never writes. Scope `get_known_links(tab)` per-tab for same-URL dedup (pending D1).
+
+- [ ] **MP-6. MCP aggregate across tabs (`src/mcp_server.py`)**
+  `get_jobs` / `get_stats` read + merge all platform tabs instead of the single `Jobs` tab.
+
+- [ ] **MP-7. Docs**
+  Update `config.example.yaml` (schedule + new source fields), `SCRAPER_OPTIONS.md` (new actors + the per-platform `max_results` / cost-cap gotcha), README (rotation + per-tab model).
+
+- [ ] **MP-8. Live validation per platform (paid, authorized per-run)**
+  After build, run each platform's source once (real run, explicit go-ahead each) and confirm: correct tab populated, fields mapped, cost within cap, digest shows the right platform.

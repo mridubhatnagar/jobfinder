@@ -7,7 +7,7 @@ isolating the "schemas-are-delivered-as-tools" quirk to one helper.
 
 from typing import Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SCORING_SYSTEM_PROMPT_TEMPLATE = """\
 You are a strict job-fit scorer. Compare a job description against the candidate's
@@ -91,15 +91,36 @@ Resume:
 
 
 class ScoreOutput(BaseModel):
+    # Tolerant by design: the model occasionally exceeds the list caps or omits a
+    # string field. Coerce/truncate/default rather than reject — a rejected response
+    # silently loses a correctly-scored job. This does NOT lower the quality bar:
+    # relevance_score is unchanged and relevance_threshold still gates the Sheet.
     relevance_score: int = Field(ge=0, le=100)
-    relevance_reason: str
-    cover_letter_required: bool
-    role_category: str
-    required_skills: list[str] = Field(max_length=6)
-    missing_skills: list[str] = Field(max_length=5)
-    resume_update_required: bool
-    resume_update_reason: str
+    relevance_reason: str = ""
+    cover_letter_required: bool = False
+    role_category: str = ""
+    required_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    resume_update_required: bool = False
+    resume_update_reason: str = ""
     company_website: str | None = None
+
+    @field_validator("relevance_score", mode="before")
+    @classmethod
+    def _clamp_score(cls, v):
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(100, v))
+
+    @field_validator("required_skills", "missing_skills", mode="before")
+    @classmethod
+    def _truncate_skills(cls, v, info):
+        if not isinstance(v, list):
+            return []
+        cap = 6 if info.field_name == "required_skills" else 5
+        return v[:cap]
 
 
 class SearchQueriesOutput(BaseModel):

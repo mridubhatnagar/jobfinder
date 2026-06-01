@@ -17,6 +17,10 @@ class EnvConfig:
     smtp_pass: str = os.environ["SMTP_PASS"]
     recipient_email: str = os.environ["RECIPIENT_EMAIL"]
     dry_run: bool = os.environ.get("DRY_RUN", "1") == "1"
+    # Dev/test: load config from a local YAML file instead of Drive.
+    local_config_path: str = os.environ.get("LOCAL_CONFIG_PATH", "")
+    # Dev/ops: run a specific source by name, ignoring the weekday schedule.
+    force_source: str = os.environ.get("FORCE_SOURCE", "")
     mcp_transport: str = os.environ.get("MCP_TRANSPORT", "stdio")
     google_oauth_client_id: str = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
     google_oauth_client_secret: str = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
